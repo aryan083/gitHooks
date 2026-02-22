@@ -44,7 +44,7 @@ test-hooks.sh
 Clone hooks into your project and run the install script:
 
 ```bash
-git clone https://github.com/<your-username>/git-hooks.git .githooks-repo
+git clone https://github.com/aryan083/git-hooks.git .githooks-repo
 bash .githooks-repo/scripts/install.sh
 ```
 
@@ -65,7 +65,7 @@ git config core.hooksPath .githooks
 ### Option 3 — Global (All Repos)
 
 ```bash
-git clone https://github.com/<your-username>/git-hooks.git ~/.githooks
+git clone https://github.com/aryan083/git-hooks.git ~/.githooks
 git config --global core.hooksPath ~/.githooks/.githooks
 ```
 
