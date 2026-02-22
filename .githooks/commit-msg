@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+commit_msg_file="$1"
+gitdir=$(git rev-parse --git-dir)
+subject=$(head -n1 "$commit_msg_file")
+
+################################
+# Skip internal git operations
+################################
+
+if [ -d "$gitdir/rebase-merge" ] || [ -d "$gitdir/rebase-apply" ]; then
+  exit 0
+fi
+[ -f "$gitdir/MERGE_HEAD" ] && exit 0
+[ -f "$gitdir/CHERRY_PICK_HEAD" ] && exit 0
+[ -f "$gitdir/REVERT_HEAD" ] && exit 0
+
+################################
+# Conventional commit format
+################################
+
+types="feat|fix|ci|chore|docs|test|style|refactor|perf|build|revert"
+regex="^($types)(\([a-zA-Z0-9._-]+\))?: .+"
+
+if ! echo "$subject" | grep -qE "$regex"; then
+  echo "Invalid commit message format"
+  echo ""
+  echo "Format:"
+  echo "  type(scope): message"
+  echo ""
+  echo "Examples:"
+  echo "  feat(auth): add login"
+  echo "  fix(ui): fix navbar overflow"
+  echo "  docs(readme): update setup"
+  echo "  revert: revert \"feat(auth): add login\""
+  exit 1
+fi
+
+################################
+# Subject length <= 50
+################################
+
+if [ ${#subject} -gt 50 ]; then
+  echo "Subject too long (${#subject}/50)"
+  exit 1
+fi
+
+################################
+# Body width <= 72 (ignore URLs)
+################################
+
+if tail -n +2 "$commit_msg_file" \
+  | grep -v '^#' \
+  | grep -vE 'https?://' \
+  | grep -q '.\{73,\}'; then
+  echo "Body line exceeds 72 characters"
+  exit 1
+fi
+
+exit 0

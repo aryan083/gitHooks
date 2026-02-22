@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+############################################
+# CONFIG
+############################################
+
+MAX_FILE_SIZE_MB=5
+ENABLE_LINT_STAGED=${ENABLE_LINT_STAGED:-true}
+ENABLE_SECRET_SCAN=${ENABLE_SECRET_SCAN:-true}
+
+############################################
+# UTIL
+############################################
+
+log()  { printf "[INFO] %s\n" "$*"; }
+warn() { printf "[WARN] %s\n" "$*"; }
+err()  { printf "[ERROR] %s\n" "$*"; }
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+gitdir=$(git rev-parse --git-dir)
+
+############################################
+# SKIP INTERNAL GIT STATES
+############################################
+
+if [ -d "$gitdir/rebase-merge" ] || \
+   [ -d "$gitdir/rebase-apply" ] || \
+   [ -f "$gitdir/MERGE_HEAD" ] || \
+   [ -f "$gitdir/CHERRY_PICK_HEAD" ] || \
+   [ -f "$gitdir/REVERT_HEAD" ]; then
+  log "Skipping pre-commit during git operation"
+  exit 0
+fi
+
+############################################
+# GET STAGED FILES
+############################################
+
+mapfile -d '' FILES < <(git diff --cached --name-only -z --diff-filter=ACM)
+[ "${#FILES[@]}" -eq 0 ] && exit 0
+
+############################################
+# SECRET SCAN 
+############################################
+
+if [ "$ENABLE_SECRET_SCAN" = true ] && has gitleaks; then
+  log "Gitleaks scan"
+
+  # detect new vs old gitleaks CLI
+  if gitleaks detect --help 2>&1 | grep -q -- '--pipe'; then
+    # modern gitleaks
+    if ! git diff --cached -U0 | gitleaks detect --pipe --redact --exit-code 1; then
+      err "Secrets detected in staged changes."
+      exit 1
+    fi
+  else
+    # legacy gitleaks fallback
+    if ! gitleaks protect --staged --redact --exit-code 1; then
+      err "Secrets detected in staged changes."
+      exit 1
+    fi
+  fi
+
+elif [ "$ENABLE_SECRET_SCAN" = true ]; then
+  warn "Gitleaks not found, using fallback regex on staged diff"
+
+  SECRET_REGEX='(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35}|-----BEGIN PRIVATE KEY-----|mongodb\+srv://|postgres://|password\s*=|api[_-]?key\s*=|secret\s*=)'
+
+  if git diff --cached | grep -E -q "$SECRET_REGEX"; then
+    err "Potential secret detected in staged changes."
+    exit 1
+  fi
+fi
+############################################
+# LARGE FILE GUARD
+############################################
+
+MAX_BYTES=$((MAX_FILE_SIZE_MB * 1024 * 1024))
+
+for f in "${FILES[@]}"; do
+  [ -f "$f" ] || continue
+  size=$(wc -c <"$f")
+  if [ "$size" -gt "$MAX_BYTES" ]; then
+    err "File too large (> ${MAX_FILE_SIZE_MB}MB): $f"
+    exit 1
+  fi
+done
+
+############################################
+# LINT-STAGED (Orchestration)
+############################################
+
+# This command triggers the rules in your package.json
+if [ "$ENABLE_LINT_STAGED" = true ] && has npx; then
+  log "Running lint-staged"
+  npx lint-staged
+fi
+
+log "Pre-commit checks passed"
+exit 0
+
+
+############################################
+# ENV FILE PROTECTION
+############################################
+
+for f in "${FILES[@]}"; do
+
+  name="$(basename "$f")"
+
+  if [[ "$name" == ".env" || "$name" == .env.* ]]; then
+
+    # allow examples/templates
+    if [[ "$name" == *.example ]] || \
+       [[ "$name" == *.template ]] || \
+       [[ "$name" == *.sample ]]; then
+      continue
+    fi
+
+    err "Environment file detected: $f"
+    err "Commit blocked. Commit a template (.env.example) instead."
+    exit 1
+  fi
+done

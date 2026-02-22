@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+################################
+# Skip git internal states
+################################
+
+cd "$(git rev-parse --show-toplevel)"
+# rebase
+if [ -d "$gitdir/rebase-merge" ] || [ -d "$gitdir/rebase-apply" ]; then
+  exit 0
+fi
+
+# merge
+[ -f "$gitdir/MERGE_HEAD" ] && exit 0
+
+# detached HEAD
+current=$(git symbolic-ref --short HEAD 2>/dev/null)
+[ -z "$current" ] && exit 0
+
+################################
+# Branch name regex
+################################
+
+regex='^(feature|bugfix|hotfix|release|support)/[A-Za-z0-9._-]+$'
+
+is_whitelisted() {
+  case "$1" in
+    main|master|develop) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+################################
+# Validate pushed refs
+################################
+
+validated=0
+
+while read local_ref local_sha remote_ref remote_sha; do
+
+  # skip tags early (fix tag push bug)
+  echo "$local_ref" | grep -q '^refs/tags/' && continue
+
+  branch=$(echo "$local_ref" | sed 's|refs/heads/||')
+  validated=1
+
+  if is_whitelisted "$branch"; then
+    continue
+  fi
+
+  if ! echo "$branch" | grep -qE "$regex"; then
+    echo "Invalid branch name: $branch"
+    echo "Examples:"
+    echo "  feature/login"
+    echo "  bugfix/navbar"
+    echo "  hotfix/payment"
+    exit 1
+  fi
+done
+
+################################
+# Fallback to current branch
+################################
+
+if [ $validated -eq 0 ]; then
+  if ! is_whitelisted "$current" && ! echo "$current" | grep -qE "$regex"; then
+    echo "Invalid branch name: $current"
+    exit 1
+  fi
+fi
+
+echo "Branch validation passed"
+exit 0
